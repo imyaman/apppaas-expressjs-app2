@@ -1,0 +1,194 @@
+extends layout
+
+block content
+  .card
+    h1= appName
+    .status
+      span.dot
+      | Status: #{status}
+    p.generated Generated at #{sysinfo.generatedAt}
+
+    section
+      h2 App
+      dl.meta
+        dt Name
+        dd
+          code= appName
+        dt Version
+        dd
+          code v#{version}
+        dt Public IP
+        dd
+          if sysinfo.publicIp && sysinfo.publicIp.ip
+            code= sysinfo.publicIp.ip
+            |  (via
+            code= sysinfo.publicIp.service
+            | )
+          else if publicIpError
+            span.err= publicIpError
+          else
+            span.err unavailable
+
+    section
+      h2 OS
+      dl.meta
+        dt Hostname
+        dd
+          code= sysinfo.os.hostname
+        dt Type
+        dd
+          code= sysinfo.os.type
+        dt Platform
+        dd
+          code= sysinfo.os.platform
+        dt Arch
+        dd
+          code= sysinfo.os.arch
+        dt Release
+        dd
+          code= sysinfo.os.release
+        dt Uptime
+        dd
+          code= sysinfo.os.uptimeSec + 's'
+
+    section
+      h2 CPU
+      dl.meta
+        dt Model
+        dd
+          code= sysinfo.os.cpus.model
+        dt Speed
+        dd
+          code= sysinfo.os.cpus.speedMHz + ' MHz'
+        dt Count
+        dd
+          code= sysinfo.os.cpus.count
+        dt Loadavg
+        dd
+          code= sysinfo.os.cpus.loadavg.join(' / ')
+
+    section
+      h2 Memory
+      dl.meta
+        dt Total
+        dd
+          code= sysinfo.os.memory.total
+        dt Used
+        dd
+          code= sysinfo.os.memory.used + ' (' + sysinfo.os.memory.usedPct + ')'
+        dt Free
+        dd
+          code= sysinfo.os.memory.free
+
+    section
+      h2 Storage
+      if sysinfo.os.storage && !sysinfo.os.storage.error
+        dl.meta
+          dt Filesystem
+          dd
+            code= sysinfo.os.storage.filesystem
+          dt Mount
+          dd
+            code= sysinfo.os.storage.mount
+          dt Size
+          dd
+            code= sysinfo.os.storage.size
+          dt Used
+          dd
+            code= sysinfo.os.storage.used
+          dt Available
+          dd
+            code= sysinfo.os.storage.available
+          dt Capacity
+          dd
+            code= sysinfo.os.storage.capacity
+      else
+        p.err Storage unavailable: #{sysinfo.os.storage && sysinfo.os.storage.error}
+
+    section
+      h2 User
+      dl.meta
+        dt Username
+        dd
+          code= sysinfo.os.user.username
+        dt UID
+        dd
+          code= sysinfo.os.user.uid
+        dt GID
+          dd
+            code= sysinfo.os.user.gid
+        dt Home
+        dd
+          code= sysinfo.os.user.homedir
+        dt Shell
+        dd
+          code= sysinfo.os.user.shell
+
+    section
+      h2 Network
+      table.net
+        thead
+          tr
+            th Interface
+            th Address
+            th Family
+            th MAC
+            th Internal
+        tbody
+          each iface in sysinfo.os.network
+            tr
+              td= iface.name
+              td
+                code= iface.address
+              td= iface.family
+              td
+                code= iface.mac
+              td= iface.internal ? 'yes' : ''
+
+    section
+      h2 Process
+      dl.meta
+        dt PID
+        dd
+          code= sysinfo.process.pid
+        dt PPID
+        dd
+          code= sysinfo.process.ppid
+        dt CWD
+        dd
+          code= sysinfo.process.cwd
+        dt Exec
+        dd
+          code= sysinfo.process.execPath
+        dt Node
+        dd
+          code= 'v' + sysinfo.process.nodeVersions.node
+        dt Uptime
+        dd
+          code= sysinfo.process.uptimeSec + 's'
+        dt Argv
+        dd
+          code= sysinfo.process.argv.join(' ')
+
+    section
+      h2 Environment
+      dl.meta
+        dt Count
+        dd
+          code= sysinfo.env.count
+      details
+        summary Common variables
+        table.kv
+          each v, k in sysinfo.env.common
+            tr
+              td.k= k
+              td
+                code= v
+      details
+        summary All variables
+        table.kv
+          each v, k in sysinfo.env.all
+            tr
+              td.k= k
+              td
+                code= v
