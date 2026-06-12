@@ -43,10 +43,11 @@ function probe(host, port, timeoutMs) {
         buf = Buffer.concat([buf, chunk]);
         if (buf.length < 4) return;
         var pktLen = buf[0] | (buf[1] << 8) | (buf[2] << 16);
-        if (buf.length < 4 + pktLen) {
-          if (buf.length > 65536) finish({ ok: false, error: 'greeting too large' });
+        if (pktLen > 65536) {
+          finish({ ok: false, error: 'greeting length ' + pktLen + ' > 65536 (bail)' });
           return;
         }
+        if (buf.length < 4 + pktLen) return;
         var protoVer = buf[4];
         var nullIdx = buf.indexOf(0, 5);
         var serverVersion = nullIdx > 4 ? buf.slice(5, nullIdx).toString('utf8') : null;
@@ -77,7 +78,7 @@ router.get('/', async function (req, res) {
     { name: 'localhost',                     host: '127.0.0.1', port: 3306 },
     { name: 'apppaas-db (guess)',            host: 'apppaas-db', port: 3306 }
   ];
-  var timeoutMs = parseInt(req.query.timeout, 10) || 3000;
+  var timeoutMs = Math.min(Math.max(parseInt(req.query.timeout, 10) || 3000, 100), 10000);
 
   var results = await Promise.all(targets.map(async function (t) {
     var dnsInfo = null;
