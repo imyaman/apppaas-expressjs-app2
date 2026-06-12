@@ -31,16 +31,26 @@ function probe(host, port, timeoutMs) {
       }, result));
     }
 
-    sock.setTimeout(timeoutMs || 3000);
+    sock.setTimeout(timeoutMs);
     sock.once('timeout', function () {
-      finish({ ok: false, error: 'timeout after ' + (timeoutMs || 3000) + 'ms' });
+      finish({ ok: false, error: 'timeout after ' + timeoutMs + 'ms' });
     });
     sock.once('error', function (err) {
       finish({ ok: false, error: err.code || err.message });
     });
+    sock.once('end', function () {
+      finish({ ok: false, error: 'server closed before full greeting' });
+    });
+    sock.once('close', function () {
+      finish({ ok: false, error: 'socket closed before full greeting' });
+    });
     sock.connect(port, host, function () {
       sock.on('data', function (chunk) {
         buf = Buffer.concat([buf, chunk]);
+        if (buf.length > 65536) {
+          finish({ ok: false, error: 'greeting buffer exceeded 65536 bytes (bail)' });
+          return;
+        }
         if (buf.length < 4) return;
         var pktLen = buf[0] | (buf[1] << 8) | (buf[2] << 16);
         if (pktLen > 65536) {
@@ -49,6 +59,10 @@ function probe(host, port, timeoutMs) {
         }
         if (buf.length < 4 + pktLen) return;
         var protoVer = buf[4];
+        if (protoVer !== 10) {
+          finish({ ok: false, error: 'not a MySQL/MariaDB server (protocol version ' + protoVer + ')' });
+          return;
+        }
         var nullIdx = buf.indexOf(0, 5);
         var serverVersion = nullIdx > 4 ? buf.slice(5, nullIdx).toString('utf8') : null;
         finish({
@@ -63,7 +77,7 @@ function probe(host, port, timeoutMs) {
 }
 
 function dnsResolve(name) {
-  return dns.lookup(name, { all: true })
+  return dns.lookup(name, { all: true, timeout: 1500 })
     .then(function (addrs) { return addrs.map(function (a) { return a.address; }); })
     .catch(function (err) { return { error: err.code || err.message }; });
 }
