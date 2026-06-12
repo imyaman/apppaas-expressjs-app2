@@ -7,6 +7,19 @@ var router = express.Router();
 
 var pkg = require(path.join(__dirname, '..', 'package.json'));
 
+function safeNetworkInterfaces() {
+  try {
+    return Object.keys(os.networkInterfaces()).reduce(function (acc, k) {
+      acc[k] = os.networkInterfaces()[k].map(function (i) {
+        return { address: i.address, family: i.family, internal: i.internal };
+      });
+      return acc;
+    }, {});
+  } catch (e) {
+    return { error: e.message };
+  }
+}
+
 /* Try a TCP connect to host:port and, on success, read the MySQL server
  * greeting to confirm it is a real MariaDB/MySQL daemon (not just an open
  * port). Returns one of:
@@ -83,6 +96,9 @@ function dnsResolve(name) {
   var lookup = dns.lookup(name, { all: true, timeout: 1500 })
     .then(function (addrs) { return addrs.map(function (a) { return a.address; }); })
     .catch(function (err) { return { error: err.code || err.message }; });
+  /* Swallow any post-race rejection from the dangling lookup to avoid
+   * unhandledRejection warnings. */
+  lookup.catch(function () {});
   var hardTimeout = new Promise(function (resolve) {
     setTimeout(function () { resolve({ error: 'dns-timeout' }); }, 1500);
   });
@@ -99,8 +115,10 @@ router.get('/', async function (req, res) {
     { name: 'localhost',                     host: '127.0.0.1', port: 3306 },
     { name: 'apppaas-db (guess)',            host: 'apppaas-db', port: 3306 }
   ];
-  var requestedTimeout = req.query.timeout != null ? String(req.query.timeout) : null;
-  var timeoutMs = Math.min(Math.max(parseInt(req.query.timeout, 10) || 3000, 100), 10000);
+  var requestedTimeoutRaw = req.query.timeout != null ? String(req.query.timeout) : null;
+  var parsedTimeout = parseInt(req.query.timeout, 10);
+  var requestedTimeout = Number.isFinite(parsedTimeout) ? parsedTimeout : null;
+  var timeoutMs = Math.min(Math.max(parsedTimeout || 3000, 100), 10000);
 
   var results = await Promise.all(targets.map(async function (t) {
     var dnsInfo = null;
@@ -122,15 +140,11 @@ router.get('/', async function (req, res) {
     version: pkg.version,
     pod: {
       hostname: os.hostname(),
-      networkInterfaces: Object.keys(os.networkInterfaces()).reduce(function (acc, k) {
-        acc[k] = os.networkInterfaces()[k].map(function (i) {
-          return { address: i.address, family: i.family, internal: i.internal };
-        });
-        return acc;
-      }, {})
+      networkInterfaces: safeNetworkInterfaces()
     },
     probedAt: new Date().toISOString(),
     requestedTimeout: requestedTimeout,
+    requestedTimeoutRaw: requestedTimeoutRaw,
     timeoutMs: timeoutMs,
     targets: results
   });
