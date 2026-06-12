@@ -77,9 +77,16 @@ function probe(host, port, timeoutMs) {
 }
 
 function dnsResolve(name) {
-  return dns.lookup(name, { all: true, timeout: 1500 })
+  /* dns.lookup's `timeout` option is best-effort: it fires a JS-side timer
+   * but the underlying libc getaddrinfo may keep running. Race a hard
+   * 1500 ms timeout so the request is guaranteed fast on any platform. */
+  var lookup = dns.lookup(name, { all: true, timeout: 1500 })
     .then(function (addrs) { return addrs.map(function (a) { return a.address; }); })
     .catch(function (err) { return { error: err.code || err.message }; });
+  var hardTimeout = new Promise(function (resolve) {
+    setTimeout(function () { resolve({ error: 'dns-timeout' }); }, 1500);
+  });
+  return Promise.race([lookup, hardTimeout]);
 }
 
 /* GET /dbcheck — probe a fixed list of candidate MariaDB endpoints and
@@ -92,6 +99,7 @@ router.get('/', async function (req, res) {
     { name: 'localhost',                     host: '127.0.0.1', port: 3306 },
     { name: 'apppaas-db (guess)',            host: 'apppaas-db', port: 3306 }
   ];
+  var requestedTimeout = req.query.timeout != null ? String(req.query.timeout) : null;
   var timeoutMs = Math.min(Math.max(parseInt(req.query.timeout, 10) || 3000, 100), 10000);
 
   var results = await Promise.all(targets.map(async function (t) {
@@ -122,6 +130,7 @@ router.get('/', async function (req, res) {
       }, {})
     },
     probedAt: new Date().toISOString(),
+    requestedTimeout: requestedTimeout,
     timeoutMs: timeoutMs,
     targets: results
   });
