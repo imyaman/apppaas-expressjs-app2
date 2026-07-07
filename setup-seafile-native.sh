@@ -18,5 +18,18 @@ REAL=$(sudo podman run --rm --entrypoint sh "$IMAGE" -c 'readlink -f /lib/x86_64
 sudo podman cp "$CID:$REAL" "$DEST/lib/"
 ln -sf "$(basename "$REAL")" "$DEST/lib/libsasl2.so.2"
 
+# glibc loader + core libs, so the glibc binary can run on a musl host (Alpine)
+# via: ld-linux ... --library-path lib:glibc seaf-server  (auto-used by lib/seafServer.js)
+GLIBC="$DEST/glibc"; mkdir -p "$GLIBC"
+for f in /lib64/ld-linux-x86-64.so.2 \
+         /lib/x86_64-linux-gnu/libc.so.6 /lib/x86_64-linux-gnu/libm.so.6 \
+         /lib/x86_64-linux-gnu/libresolv.so.2 /lib/x86_64-linux-gnu/libpthread.so.0 \
+         /lib/x86_64-linux-gnu/libdl.so.2 /lib/x86_64-linux-gnu/librt.so.1 \
+         /lib/x86_64-linux-gnu/libnss_files.so.2 /lib/x86_64-linux-gnu/libnss_dns.so.2; do
+  R=$(sudo podman run --rm --entrypoint sh "$IMAGE" -c "readlink -f $f" 2>/dev/null) || continue
+  sudo podman cp "$CID:$R" "$GLIBC/" 2>/dev/null || continue
+  [ "$(basename "$f")" != "$(basename "$R")" ] && ln -sf "$(basename "$R")" "$GLIBC/$(basename "$f")"
+done
+
 sudo chown -R "$USER:$USER" "$DEST" 2>/dev/null || true
 echo "Done. $(du -sh "$DEST" | cut -f1) in $DEST"

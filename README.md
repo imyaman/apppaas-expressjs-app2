@@ -20,28 +20,40 @@ PaaS launches `node ./bin/www --host 0.0.0.0 --port 3000` (also `npm start` / `n
 
 - `GET /` — JSON status. `GET /healthz` — `ok`. WS endpoint: `ws://<host>:3000/seaf`.
 
-## Deployment note — Alpine / musl PaaS
+## Deployment — run seaf-server on the Alpine PaaS
 
-`seaf-server` is a **glibc (Ubuntu) binary and will NOT run on Alpine/musl**, and this
-PaaS is **stateless** (no persistent volume) — unsuitable for seaf-server's storage.
-So on the PaaS run this app as a **relay only** to a seaf-server on a glibc host:
+`seaf-server` is a glibc (Ubuntu) binary, but it **runs on Alpine/musl** via the
+bundled glibc loader in `seafile-native/glibc/` (auto-detected — verified inside
+`node:20-alpine`). On first start the app also initializes itself: creates the
+conf/data dirs, writes `seafile.conf`, and loads the `seafile_db` + `ccnet_db`
+schema into MySQL. Set:
 
 ```
-SPAWN_SEAFSERVER=false
+SPAWN_SEAFSERVER=true
+JWT_PRIVATE_KEY=<shared secret, must match the app tier>   # required
+SEAF_DB_HOST=<mysql host>       # e.g. the PaaS MySQL
+SEAF_DB_PORT=3306
+SEAF_DB_USER=<user>             # needs CREATE DATABASE + DDL on the seafile/ccnet DBs
+SEAF_DB_PASSWORD=<pw>
+# optional overrides: SEAF_DB_SEAFILE_NAME / _CCNET_NAME / _DTABLE_NAME
+# data/conf live under ./ (ephemeral on a stateless PaaS — fine for testing;
+# for durability use seafile's S3 backend or a persistent volume)
+```
+
+Note the PaaS is **stateless** — `seafile-data` (object storage) is lost on redeploy.
+That is fine for testing; for durable storage configure seafile's S3 backend.
+
+### Alternative — relay only
+
+If seaf-server runs on a separate glibc host instead, set `SPAWN_SEAFSERVER=false`
+and relay to it over TCP:
+
+```
 SEAF_UPSTREAM=tcp
 SEAF_UPSTREAM_HOST=<seaf-server host>
 SEAF_UPSTREAM_PORT=9200
 ```
-
-On the seaf-server host, expose its unix socket over TCP, e.g.:
-
-```
-socat TCP-LISTEN:9200,fork,reuseaddr UNIX-CONNECT:/opt/.../run/seafile.sock
-```
-
-(For an all-in-one glibc host, instead set `SPAWN_SEAFSERVER=true` and this app runs
-seaf-server itself — see `setup-seafile-native.sh`. On musl you may bundle a glibc
-loader and point `SEAF_LD_SO` at it, but a glibc host is simpler.)
+and on that host: `socat TCP-LISTEN:9200,fork,reuseaddr UNIX-CONNECT:/.../run/seafile.sock`
 
 ## Environment variables
 
@@ -54,8 +66,9 @@ loader and point `SEAF_LD_SO` at it, but a glibc host is simpler.)
 | `SEAF_UPSTREAM_HOST` | `127.0.0.1` | when `tcp` |
 | `SEAF_UPSTREAM_PORT` | `9200` | when `tcp` |
 | `SEAF_SOCKET_PATH` | `RUN_DIR/seafile.sock` | when `unix` |
-| `SPAWN_SEAFSERVER` | `false` | `true` = run seaf-server here (glibc host only) |
-| `SEAF_LD_SO` | | optional bundled glibc `ld-linux` to run seaf-server on musl |
+| `SPAWN_SEAFSERVER` | `false` | `true` = run seaf-server here (+ auto init conf/DB) |
+| `SEAF_LD_SO` | auto | glibc `ld-linux` to run seaf-server on musl; auto-detected at `seafile-native/glibc/` |
+| `INIT_DTABLE_DB` | `false` | also load the app-tier `dtable_db` schema |
 | `SEAFILE_NATIVE_DIR` | `./seafile-native` | `bin/` + `lib/` (spawn mode) |
 | `RUN_DIR` `LOG_DIR` | `./run` `./logs` | |
 | `SEAFILE_CONF_DIR` `SEAFILE_DATA_DIR` `CCNET_CONF_DIR` | `./conf` `./seafile-data` `./ccnet` | spawn mode |

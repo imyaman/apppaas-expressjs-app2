@@ -10,6 +10,7 @@ import http from 'node:http';
 import config from './lib/config.js';
 import { startSeafServer, waitForSocket, stopSeafServer } from './lib/seafServer.js';
 import { attachRelay } from './lib/relay.js';
+import { initSeaf } from './lib/initSeaf.js';
 
 const app = express();
 let relay;
@@ -42,6 +43,11 @@ async function main() {
   });
 
   if (config.spawnSeafServer) {
+    try {
+      await initSeaf();   // dirs + conf + DB schema (idempotent)
+    } catch (e) {
+      console.error('[init] failed:', e.message, '- seaf-server may not start');
+    }
     startSeafServer();
     try {
       await waitForSocket();
