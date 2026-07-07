@@ -52,6 +52,12 @@ app.get('/status', (req, res) => {
       error: status.seafError,
     },
     recentLog: tailLog(2000),
+    db: { host: config.db.host, port: config.db.port, user: config.db.user,
+          seafileDb: config.db.seafileDb, ccnetDb: config.db.ccnetDb },
+    // discover the PaaS-provided MySQL connection env (values redacted for secrets)
+    dbEnv: Object.fromEntries(Object.entries(process.env)
+      .filter(([k]) => /mysql|maria|3306|database|(^|_)db(_|$)|_host$|_port$|_addr$/i.test(k))
+      .map(([k, v]) => [k, /pass|secret|token|pwd|key/i.test(k) ? '***' : v])),
     os: {
       platform: process.platform, arch: process.arch, node: process.version,
       release: os.release(),
