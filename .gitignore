@@ -1,1 +1,8 @@
 node_modules/
+seafile-native/
+run/
+logs/
+seafile-data/
+conf/
+ccnet/
+*.pid
