@@ -5,3 +5,4 @@ seafile-data/
 conf/
 ccnet/
 *.pid
+jwt_private_key.txt
