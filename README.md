@@ -87,8 +87,19 @@ RELAY_WS_URL=wss://<relay-public-address>/seaf \
 npm run client
 ```
 
-Also point the app-tier nginx `/seafhttp` upstream at the seaf-server host's `:8082`
-(integrated fileserver, HTTP), and share the same `JWT_PRIVATE_KEY` + MariaDB/Redis.
+For files, point the app-tier nginx `/seafhttp` upstream at **this relay's public
+address** (not `:8082`): the PaaS exposes only port 3000, so the relay proxies
+`/seafhttp/*` to its local fileserver. Example nginx upstream:
+`proxy_pass https://<relay-address>;` for the `/seafhttp` location.
+
+Share the same `JWT_PRIVATE_KEY` + MariaDB/Redis across both tiers.
+
+## Endpoints
+
+- `GET /` — health JSON. `GET /healthz` — `ok`.
+- `GET /status` — seaf-server + init state, OS info, recent `seafile.log` (diagnosis).
+- `WS /seaf` — RPC relay (searpc over WebSocket).
+- `/seafhttp/*` — HTTP proxy to the local seafile fileserver (:8082).
 
 ## setup-seafile-native.sh
 

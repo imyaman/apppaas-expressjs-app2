@@ -7,10 +7,14 @@
 // Runs via `npm start`; listens on :3000 (HTTP health + WS relay at /seaf).
 import express from 'express';
 import http from 'node:http';
+import fs from 'node:fs';
+import os from 'node:os';
 import config from './lib/config.js';
-import { startSeafServer, waitForSocket, stopSeafServer } from './lib/seafServer.js';
+import { startSeafServer, waitForSocket, stopSeafServer, tailLog } from './lib/seafServer.js';
 import { attachRelay } from './lib/relay.js';
+import { attachFileProxy } from './lib/fileProxy.js';
 import { initSeaf } from './lib/initSeaf.js';
+import { status } from './lib/status.js';
 
 const app = express();
 let relay;
@@ -31,6 +35,33 @@ app.get('/', (req, res) => {
   });
 });
 app.get('/healthz', (req, res) => res.send('ok'));
+
+// Remote diagnosis: seaf-server + init state, os, and recent seafile.log.
+app.get('/status', (req, res) => {
+  const readFile = (p) => { try { return fs.readFileSync(p, 'utf8').trim(); } catch { return null; } };
+  res.json({
+    service: 'seaf-server-relay',
+    spawnSeafServer: config.spawnSeafServer,
+    upstream: upstreamDesc(),
+    init: { state: status.init, detail: status.initDetail, error: status.initError },
+    seafServer: {
+      state: status.seaf,
+      pid: status.seafPid,
+      socket: config.socketPath,
+      socketExists: fs.existsSync(config.socketPath),
+      error: status.seafError,
+    },
+    recentLog: tailLog(2000),
+    os: {
+      platform: process.platform, arch: process.arch, node: process.version,
+      release: os.release(),
+      osRelease: readFile('/etc/os-release'),
+      alpine: readFile('/etc/alpine-release'),
+    },
+  });
+});
+
+attachFileProxy(app);   // /seafhttp/* -> local fileserver :8082 (files over the single exposed port)
 
 const server = http.createServer(app);
 relay = attachRelay(server);
