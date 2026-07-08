@@ -11,6 +11,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { execFile, spawn } from 'node:child_process';
+import httpProxy from 'http-proxy';
 import config from './lib/config.js';
 import { startSeafServer, waitForSocket, stopSeafServer, tailLog } from './lib/seafServer.js';
 import { attachRelay } from './lib/relay.js';
@@ -25,7 +26,8 @@ const upstreamDesc = () => config.upstream === 'tcp'
   ? `tcp://${config.upstreamHost}:${config.upstreamPort}`
   : `unix:${config.socketPath}`;
 
-app.get('/', (req, res) => {
+app.get('/', (req, res, next) => {
+  if (config.runMode === 'fullstack') return next();   // proxy root to SeaTable
   res.json({
     service: 'seaf-server-relay',
     ok: true,
@@ -77,6 +79,14 @@ app.get('/ptrace-test', async (req, res) => {
 // Phase 1: download+extract the x86_64 rootfs and validate PRoot runs its
 // binaries. Runs the setup script in the background; poll this endpoint for the
 // log. Pass ?restart=1 to re-run.
+// Fullstack (PRoot) log
+const FS_LOG = path.join(config.root, 'fullstack.log');
+app.get('/fullstack-log', (req, res) => {
+  let log = null;
+  try { log = fs.readFileSync(FS_LOG, 'utf8'); } catch { /* ignore */ }
+  res.type('text/plain').send(log || '(no fullstack.log yet)');
+});
+
 const PROOT_LOG = path.join(config.root, 'proot.log');
 app.get('/proot-probe', (req, res) => {
   if (req.query.restart) { try { fs.rmSync(PROOT_LOG, { force: true }); } catch { /* ignore */ } }
@@ -124,17 +134,43 @@ app.get('/status', (req, res) => {
   });
 });
 
-attachFileProxy(app);   // /seafhttp/* -> local fileserver :8082 (files over the single exposed port)
+const FULLSTACK = config.runMode === 'fullstack';
+
+if (FULLSTACK) {
+  // Proxy everything (except the diagnostics above) to the in-PRoot nginx :8080.
+  const proxy = httpProxy.createProxyServer({ target: 'http://127.0.0.1:8080', ws: true, xfwd: true });
+  proxy.on('error', (e, req, res) => {
+    if (res && !res.headersSent && res.writeHead) { res.writeHead(502); res.end('SeaTable starting… ' + e.code); }
+    else if (res && res.destroy) res.destroy();
+  });
+  app.use((req, res) => proxy.web(req, res));
+  var proxyServer = proxy; // referenced by the upgrade handler below
+} else {
+  attachFileProxy(app);   // /seafhttp/* -> local fileserver :8082 (relay mode)
+}
 
 const server = http.createServer(app);
-relay = attachRelay(server);
+if (FULLSTACK) {
+  server.on('upgrade', (req, socket, head) => proxyServer.ws(req, socket, head));
+} else {
+  relay = attachRelay(server);
+}
 
 async function main() {
-  // Start the HTTP/WS server FIRST so the deployment is always reachable
-  // (health checks pass) even if seaf-server can't run on this host.
   server.listen(config.port, config.host, () => {
-    console.log(`[relay] listening on http://${config.host}:${config.port}  (WS ${config.wsPath})  upstream=${upstreamDesc()}`);
+    console.log(`[app] listening on http://${config.host}:${config.port}  mode=${config.runMode}`);
   });
+
+  if (FULLSTACK) {
+    // Download rootfs + start redis + run the full SeaTable stack under PRoot.
+    fs.writeFileSync(FS_LOG, '');
+    const out = fs.openSync(FS_LOG, 'a');
+    const child = spawn('sh', [path.join(config.root, 'scripts', 'fullstack-paas.sh')],
+      { env: { ...process.env, APPDIR: config.root }, stdio: ['ignore', out, out], detached: true });
+    child.unref();
+    console.log('[fullstack] started (pid', child.pid, ') — see /fullstack-log');
+    return;
+  }
 
   if (config.spawnSeafServer) {
     try {
