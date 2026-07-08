@@ -42,7 +42,17 @@ app.get('/healthz', (req, res) => res.send('ok'));
 // can run the x86_64 SeaTable stack on this PaaS without CAP_SYS_CHROOT.
 app.get('/ptrace-test', async (req, res) => {
   const readFile = (p) => { try { return fs.readFileSync(p, 'utf8').trim(); } catch { return null; } };
-  const proot = path.join(config.root, 'bin', 'proot-x86_64');
+  // fetch proot at runtime (not committed — a bundled ELF may be rejected by the deploy)
+  const proot = path.join(config.root, 'proot-x86_64');
+  let prootFetch = 'cached';
+  if (!fs.existsSync(proot)) {
+    try {
+      const r = await fetch('https://proot.gitlab.io/proot/bin/proot');
+      const buf = Buffer.from(await r.arrayBuffer());
+      fs.writeFileSync(proot, buf, { mode: 0o755 });
+      prootFetch = `downloaded ${buf.length} bytes`;
+    } catch (e) { prootFetch = 'download failed: ' + e.message; }
+  }
   const run = (env) => new Promise((resolve) => {
     execFile(proot, ['-0', '/bin/echo', 'PROOT_OK'],
       { timeout: 10000, env: { ...process.env, ...env } },
@@ -57,9 +67,10 @@ app.get('/ptrace-test', async (req, res) => {
     uid: process.getuid ? process.getuid() : null,
     ptrace_scope: readFile('/proc/sys/kernel/yama/ptrace_scope'),
     seccomp_status: (readFile('/proc/self/status') || '').split('\n').find((l) => l.startsWith('Seccomp')) || null,
+    prootFetch,
     prootExists: fs.existsSync(proot),
-    proot_default: await run({}),
-    proot_no_seccomp: await run({ PROOT_NO_SECCOMP: '1' }),
+    proot_default: fs.existsSync(proot) ? await run({}) : 'no proot',
+    proot_no_seccomp: fs.existsSync(proot) ? await run({ PROOT_NO_SECCOMP: '1' }) : 'no proot',
   });
 });
 

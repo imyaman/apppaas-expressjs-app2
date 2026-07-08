@@ -6,3 +6,4 @@ conf/
 ccnet/
 *.pid
 jwt_private_key.txt
+proot-x86_64
