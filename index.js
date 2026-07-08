@@ -10,7 +10,7 @@ import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
-import { execFile } from 'node:child_process';
+import { execFile, spawn } from 'node:child_process';
 import config from './lib/config.js';
 import { startSeafServer, waitForSocket, stopSeafServer, tailLog } from './lib/seafServer.js';
 import { attachRelay } from './lib/relay.js';
@@ -72,6 +72,25 @@ app.get('/ptrace-test', async (req, res) => {
     proot_default: fs.existsSync(proot) ? await run({}) : 'no proot',
     proot_no_seccomp: fs.existsSync(proot) ? await run({ PROOT_NO_SECCOMP: '1' }) : 'no proot',
   });
+});
+
+// Phase 1: download+extract the x86_64 rootfs and validate PRoot runs its
+// binaries. Runs the setup script in the background; poll this endpoint for the
+// log. Pass ?restart=1 to re-run.
+const PROOT_LOG = path.join(config.root, 'proot.log');
+app.get('/proot-probe', (req, res) => {
+  if (req.query.restart) { try { fs.rmSync(PROOT_LOG, { force: true }); } catch { /* ignore */ } }
+  if (!fs.existsSync(PROOT_LOG)) {
+    fs.writeFileSync(PROOT_LOG, '');
+    const out = fs.openSync(PROOT_LOG, 'a');
+    const child = spawn('sh', [path.join(config.root, 'scripts', 'proot-setup.sh')],
+      { env: { ...process.env, APPDIR: config.root }, stdio: ['ignore', out, out], detached: true });
+    child.unref();
+    return res.json({ started: true, pid: child.pid });
+  }
+  let log = null;
+  try { log = fs.readFileSync(PROOT_LOG, 'utf8'); } catch { /* ignore */ }
+  res.json({ started: true, done: (log || '').includes('DONE'), log: (log || '').slice(-6000) });
 });
 
 // Remote diagnosis: seaf-server + init state, os, and recent seafile.log.
