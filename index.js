@@ -9,6 +9,8 @@ import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
 import os from 'node:os';
+import path from 'node:path';
+import { execFile } from 'node:child_process';
 import config from './lib/config.js';
 import { startSeafServer, waitForSocket, stopSeafServer, tailLog } from './lib/seafServer.js';
 import { attachRelay } from './lib/relay.js';
@@ -35,6 +37,31 @@ app.get('/', (req, res) => {
   });
 });
 app.get('/healthz', (req, res) => res.send('ok'));
+
+// Probe whether PRoot (userspace chroot via ptrace) works here — decides if we
+// can run the x86_64 SeaTable stack on this PaaS without CAP_SYS_CHROOT.
+app.get('/ptrace-test', async (req, res) => {
+  const readFile = (p) => { try { return fs.readFileSync(p, 'utf8').trim(); } catch { return null; } };
+  const proot = path.join(config.root, 'bin', 'proot-x86_64');
+  const run = (env) => new Promise((resolve) => {
+    execFile(proot, ['-0', '/bin/echo', 'PROOT_OK'],
+      { timeout: 10000, env: { ...process.env, ...env } },
+      (err, stdout, stderr) => resolve({
+        ok: !err && (stdout || '').trim() === 'PROOT_OK',
+        code: err ? (err.code ?? err.errno ?? null) : 0,
+        stdout: (stdout || '').trim().slice(0, 200),
+        stderr: (stderr || '').trim().slice(0, 800),
+      }));
+  });
+  res.json({
+    uid: process.getuid ? process.getuid() : null,
+    ptrace_scope: readFile('/proc/sys/kernel/yama/ptrace_scope'),
+    seccomp_status: (readFile('/proc/self/status') || '').split('\n').find((l) => l.startsWith('Seccomp')) || null,
+    prootExists: fs.existsSync(proot),
+    proot_default: await run({}),
+    proot_no_seccomp: await run({ PROOT_NO_SECCOMP: '1' }),
+  });
+});
 
 // Remote diagnosis: seaf-server + init state, os, and recent seafile.log.
 app.get('/status', (req, res) => {
