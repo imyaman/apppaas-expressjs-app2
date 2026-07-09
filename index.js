@@ -7,6 +7,7 @@
 // Runs via `npm start`; listens on :3000 (HTTP health + WS relay at /seaf).
 import express from 'express';
 import http from 'node:http';
+import net from 'node:net';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
@@ -99,12 +100,19 @@ app.get('/proot-status', async (req, res) => {
     }
   }
   const probe = (port) => new Promise((r) => {
-    const rq = http.request({ host: '127.0.0.1', port, path: '/', timeout: 4000 }, (rs) => { r(rs.statusCode); rs.resume(); });
+    const rq = http.request({ host: '127.0.0.1', port, path: '/', timeout: 5000 }, (rs) => { r(rs.statusCode); rs.resume(); });
     rq.on('error', (e) => r(e.code)); rq.on('timeout', () => { rq.destroy(); r('timeout'); }); rq.end();
+  });
+  const tcp = (port) => new Promise((r) => {
+    const s = net.connect({ port, host: '127.0.0.1', timeout: 5000 });
+    s.on('connect', () => { s.destroy(); r('connected'); });
+    s.on('error', (e) => r(e.code)); s.on('timeout', () => { s.destroy(); r('timeout'); });
   });
   const L = path.join(config.root, 'rootfs', 'shared', 'seatable', 'logs');
   res.json({
     listening: [...ports].sort((a, b) => a - b),
+    tcp_redis6379: await tcp(6379),   // native (apk) listener
+    tcp8080: await tcp(8080), tcp8000: await tcp(8000),   // proot listeners
     probe8080: await probe(8080),
     probe8000: await probe(8000),
     gunicorn: (readFile(path.join(L, 'gunicorn.log')) || '').slice(-1500),
