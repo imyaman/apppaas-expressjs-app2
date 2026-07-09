@@ -87,6 +87,33 @@ app.get('/fullstack-log', (req, res) => {
   res.type('text/plain').send(log || '(no fullstack.log yet)');
 });
 
+// Diagnose the in-PRoot SeaTable: listening ports (shared netns), live probes,
+// and component logs from the extracted rootfs.
+app.get('/proot-status', async (req, res) => {
+  const readFile = (p) => { try { return fs.readFileSync(p, 'utf8'); } catch { return null; } };
+  const ports = new Set();
+  for (const f of ['/proc/net/tcp', '/proc/net/tcp6']) {
+    for (const line of (readFile(f) || '').split('\n').slice(1)) {
+      const p = line.trim().split(/\s+/);
+      if (p[3] === '0A' && p[1]) { const n = parseInt(p[1].split(':')[1], 16); if (n) ports.add(n); }
+    }
+  }
+  const probe = (port) => new Promise((r) => {
+    const rq = http.request({ host: '127.0.0.1', port, path: '/', timeout: 4000 }, (rs) => { r(rs.statusCode); rs.resume(); });
+    rq.on('error', (e) => r(e.code)); rq.on('timeout', () => { rq.destroy(); r('timeout'); }); rq.end();
+  });
+  const L = path.join(config.root, 'rootfs', 'shared', 'seatable', 'logs');
+  res.json({
+    listening: [...ports].sort((a, b) => a - b),
+    probe8080: await probe(8080),
+    probe8000: await probe(8000),
+    gunicorn: (readFile(path.join(L, 'gunicorn.log')) || '').slice(-1500),
+    dtableWeb: (readFile(path.join(L, 'dtable_web.log')) || '').slice(-1500),
+    seafile: (readFile(path.join(L, 'seafile.log')) || '').slice(-600),
+    nginxOut: (readFile(path.join(L, 'nginx.out')) || '').slice(-600),
+  });
+});
+
 const PROOT_LOG = path.join(config.root, 'proot.log');
 app.get('/proot-probe', (req, res) => {
   if (req.query.restart) { try { fs.rmSync(PROOT_LOG, { force: true }); } catch { /* ignore */ } }
