@@ -110,6 +110,8 @@ app.get('/proot-status', async (req, res) => {
   });
   const L = path.join(config.root, 'rootfs', 'shared', 'seatable', 'logs');
   res.json({
+    pod: os.hostname(),
+    fullstackRunning: fs.existsSync(path.join(config.root, 'rootfs', 'opt', 'seatable')),
     listening: [...ports].sort((a, b) => a - b),
     tcp_redis6379: await tcp(6379),   // native (apk) listener
     tcp8080: await tcp(8080), tcp8000: await tcp(8000),   // proot listeners
