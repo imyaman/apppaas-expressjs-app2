@@ -10,16 +10,24 @@ FULLSTACK="$APPDIR/scripts/seatable-fullstack.sh"
 URL="https://github.com/imyaman/apppaas-expressjs-app2/releases/download/rootfs-v1/seatable-rootfs.tar.zst"
 log(){ echo "[fullstack $(date +%T)] $*"; }
 get(){ if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$2" "$1"; else wget -qO "$2" "$1"; fi; }
+# retry a command up to N times (network flakiness / Istio sidecar startup)
+retry(){ n="$1"; shift; i=1; while [ "$i" -le "$n" ]; do "$@" && return 0; log "retry $i/$n: $*"; i=$((i+1)); sleep 4; done; return 1; }
+
+# Wait for outbound network. On this PaaS the Istio sidecar isn't ready at boot,
+# so egress is refused until it comes up — poll until a fetch succeeds.
+log "waiting for network egress (istio sidecar)"
+i=1; while [ "$i" -le 60 ]; do
+  if get https://proot.gitlab.io/proot/bin/proot "$PROOT" 2>/dev/null && [ -s "$PROOT" ]; then chmod +x "$PROOT"; log "network up; proot fetched"; break; fi
+  i=$((i+1)); sleep 4
+done
+[ -x "$PROOT" ] || { log "network never came up — abort"; exit 1; }
 
 # tools
-command -v redis-server >/dev/null 2>&1 || { log "apk add redis bash zstd"; apk add --no-cache redis bash zstd >/dev/null 2>&1 || log "apk failed"; }
-
-# proot
-[ -x "$PROOT" ] || { log "fetch proot"; get https://proot.gitlab.io/proot/bin/proot "$PROOT" && chmod +x "$PROOT"; }
+command -v redis-server >/dev/null 2>&1 || { log "apk add redis bash zstd"; retry 20 apk add --no-cache redis bash zstd >/dev/null 2>&1 || log "apk failed"; }
 
 # rootfs
 if [ ! -e "$ROOTFS/opt/seatable" ]; then
-  [ -f "$ASSET" ] || { log "download rootfs (~865MB)"; get "$URL" "$ASSET" && log "downloaded" || log "download FAILED"; }
+  [ -f "$ASSET" ] || { log "download rootfs (~865MB)"; retry 20 get "$URL" "$ASSET" && log "downloaded" || log "download FAILED"; }
   log "extract rootfs"; mkdir -p "$ROOTFS"
   zstd -dc "$ASSET" | tar -x -C "$ROOTFS" && log "extracted" || log "extract FAILED"
 fi
